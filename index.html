@@ -759,27 +759,21 @@ function processImage(img) {
   ctx.drawImage(img, 0, 0);
 
   // ── Calibrated grid (measured from reference scan IMG_0569.png) ──
-  // Registration marks: TL(48,560) TR(1120,560) BL(48,1971) BR(1120,1971)
-  // Reference image size: 1170 x 2532
   const REF_W = 1170, REF_H = 2532;
   const REG = { TL:{x:48,y:560}, TR:{x:1120,y:560}, BL:{x:48,y:1971}, BR:{x:1120,y:1971} };
-  const LEFT_X  = [158, 199, 241, 282, 324];  // A B C D E (Q1-25)
-  const RIGHT_X = [682, 724, 765, 807, 848];  // A B C D E (Q26-50)
+  const LEFT_X  = [158, 199, 241, 282, 324];
+  const RIGHT_X = [682, 724, 765, 807, 848];
   const GRID_START_Y = 782;
   const GRID_STEP_Y  = 38;
-  const SAMPLE_R = 8;           // pixel radius to average for fill detection
-  const FILL_THRESHOLD = 180;   // mean brightness below this = filled bubble
-  const UNCERTAIN_THRESHOLD = 210; // above fill but below this = flag as uncertain
+  const SAMPLE_R = 8;
+  const FILL_THRESHOLD = 150;
+  const UNCERTAIN_THRESHOLD = 185;
 
   try {
     const ctx = canvas.getContext('2d');
     const iw = canvas.width, ih = canvas.height;
 
-    // ── Find registration marks to compute perspective transform ──
-    // We locate the 4 corner dots by finding the darkest circular blobs
-    // near each expected corner location, then compute scale + offset.
-
-    // Helper: sample mean brightness in a region
+    // ── Sample mean brightness at a point ──
     function sampleBrightness(cx, cy, r) {
       const x0 = Math.max(0, Math.round(cx - r));
       const y0 = Math.max(0, Math.round(cy - r));
@@ -795,79 +789,119 @@ function processImage(img) {
       return count > 0 ? sum / count : 255;
     }
 
-    // Find actual registration mark positions by searching near expected corners
-    // Scale expected coords to actual image size
+    // ── Find a registration mark by searching for darkest spot near expected location ──
     function findRegMark(refX, refY) {
       const sx = (refX / REF_W) * iw;
       const sy = (refY / REF_H) * ih;
-      const searchR = iw * 0.06; // search within 6% of image width
-      let bestX = sx, bestY = sy, bestBright = 999;
-      const step = Math.max(2, Math.round(searchR / 15));
+      const searchR = iw * 0.10; // search within 10% of image width
+      const probeR  = Math.round(iw * 0.012);
+      let bestX = sx, bestY = sy, bestB = 999;
+      const step = Math.max(3, Math.round(searchR / 20));
       for (let dy = -searchR; dy <= searchR; dy += step) {
         for (let dx = -searchR; dx <= searchR; dx += step) {
-          const b = sampleBrightness(sx + dx, sy + dy, iw * 0.01);
-          if (b < bestBright) { bestBright = b; bestX = sx+dx; bestY = sy+dy; }
+          const b = sampleBrightness(sx + dx, sy + dy, probeR);
+          if (b < bestB) { bestB = b; bestX = sx + dx; bestY = sy + dy; }
         }
       }
-      return { x: bestX, y: bestY };
+      return { x: bestX, y: bestY, b: bestB };
     }
 
     const tl = findRegMark(REG.TL.x, REG.TL.y);
     const tr = findRegMark(REG.TR.x, REG.TR.y);
     const bl = findRegMark(REG.BL.x, REG.BL.y);
+    const br = findRegMark(REG.BR.x, REG.BR.y);
 
-    // Compute affine mapping: ref coords → image coords
-    // Use TL as origin, TR for X scale/skew, BL for Y scale/skew
-    const scaleX = (tr.x - tl.x) / (REG.TR.x - REG.TL.x);
-    const scaleY = (bl.y - tl.y) / (REG.BL.y - REG.TL.y);
-    const skewX  = (bl.x - tl.x) / (REG.BL.y - REG.TL.y);
-    const skewY  = (tr.y - tl.y) / (REG.TR.x - REG.TL.x);
-    const offX   = tl.x - REG.TL.x * scaleX;
-    const offY   = tl.y - REG.TL.y * scaleY;
+    // ── Perspective transform: maps reference coords → image coords ──
+    // Solve H such that H * [rx,ry,1]^T = [ix,iy,1]^T
+    // Using the Direct Linear Transform (DLT) with 4 point correspondences
+    // src = reference corners, dst = found image corners
+    const srcPts = [
+      [REG.TL.x, REG.TL.y], [REG.TR.x, REG.TR.y],
+      [REG.BL.x, REG.BL.y], [REG.BR.x, REG.BR.y]
+    ];
+    const dstPts = [
+      [tl.x, tl.y], [tr.x, tr.y],
+      [bl.x, bl.y], [br.x, br.y]
+    ];
+
+    // Build 8x8 matrix A for DLT
+    function getPerspectiveTransform(src, dst) {
+      const A = [];
+      for (let i = 0; i < 4; i++) {
+        const [sx, sy] = src[i];
+        const [dx, dy] = dst[i];
+        A.push([-sx, -sy, -1,   0,   0,  0, dx*sx, dx*sy, dx]);
+        A.push([  0,   0,  0, -sx, -sy, -1, dy*sx, dy*sy, dy]);
+      }
+      // Solve using Gaussian elimination (8 equations, 8 unknowns h0..h7, h8=1)
+      // Reduce to 8x8 by substituting h8=1
+      const M = A.map(row => [...row.slice(0,8), -row[8]]);
+      // Forward elimination
+      for (let col = 0; col < 8; col++) {
+        let maxRow = col;
+        for (let r = col+1; r < 8; r++) if (Math.abs(M[r][col]) > Math.abs(M[maxRow][col])) maxRow = r;
+        [M[col], M[maxRow]] = [M[maxRow], M[col]];
+        for (let r = col+1; r < 8; r++) {
+          const f = M[r][col] / M[col][col];
+          for (let c = col; c <= 8; c++) M[r][c] -= f * M[col][c];
+        }
+      }
+      // Back substitution
+      const h = new Array(9).fill(0);
+      h[8] = 1;
+      for (let r = 7; r >= 0; r--) {
+        h[r] = M[r][8];
+        for (let c = r+1; c < 8; c++) h[r] -= M[r][c] * h[c];
+        h[r] /= M[r][r];
+      }
+      return h; // [h0..h8]
+    }
+
+    const H = getPerspectiveTransform(srcPts, dstPts);
 
     function refToImg(rx, ry) {
+      const w = H[6]*rx + H[7]*ry + H[8];
       return {
-        x: rx * scaleX + ry * skewX + offX,
-        y: ry * scaleY + rx * skewY + offY
+        x: (H[0]*rx + H[1]*ry + H[2]) / w,
+        y: (H[3]*rx + H[4]*ry + H[5]) / w
       };
     }
+
+    // Scale sample radius to image size relative to reference
+    const scaleEst = (tr.x - tl.x) / (REG.TR.x - REG.TL.x);
+    const sampleRadius = Math.round(SAMPLE_R * scaleEst);
 
     // ── Read each bubble ──
     detectedAnswers = [];
     uncertainFlags  = [];
-    const sampleRadius = Math.round(SAMPLE_R * scaleX);
 
     for (let q = 0; q < NUM_Q; q++) {
-      const col    = q < 25 ? 0 : 1;
-      const row    = q % 25;
-      const xArr   = col === 0 ? LEFT_X : RIGHT_X;
-      const refY   = GRID_START_Y + row * GRID_STEP_Y;
+      const col  = q < 25 ? 0 : 1;
+      const row  = q % 25;
+      const xArr = col === 0 ? LEFT_X : RIGHT_X;
+      const refY = GRID_START_Y + row * GRID_STEP_Y;
 
-      // Sample brightness for each choice
       const brightnesses = xArr.map(rx => {
         const { x, y } = refToImg(rx, refY);
         return sampleBrightness(x, y, sampleRadius);
       });
 
-      const minB  = Math.min(...brightnesses);
+      const minB   = Math.min(...brightnesses);
       const minIdx = brightnesses.indexOf(minB);
+      const sorted = [...brightnesses].sort((a,b) => a-b);
+      const isDouble = sorted[1] < FILL_THRESHOLD + 25;
 
       if (minB > UNCERTAIN_THRESHOLD) {
-        // All bubbles are bright → blank
         detectedAnswers.push('');
         uncertainFlags.push(false);
       } else if (minB > FILL_THRESHOLD) {
-        // Kinda dark but not confident
         detectedAnswers.push(CHOICES[minIdx]);
         uncertainFlags.push(true);
       } else {
-        // Clearly filled
-        // Check if 2nd darkest is also dark (double-bubble)
-        const sorted = [...brightnesses].sort((a,b) => a-b);
-        const isDouble = sorted[1] < FILL_THRESHOLD + 30;
         detectedAnswers.push(CHOICES[minIdx]);
         uncertainFlags.push(isDouble);
       }
+    }
     }
 
   } catch(e) {
