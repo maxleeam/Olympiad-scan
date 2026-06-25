@@ -4,41 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>OlympiadScan</title>
-<script>
-  // Load OpenCV.js properly — async attribute breaks the onload callback
-  (function() {
-    var script = document.createElement('script');
-    // Use jsDelivr CDN mirror which is more reliable than docs.opencv.org
-    script.src = 'https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.js';
-    script.onload = function() {
-      // opencv.js sets cv['onRuntimeInitialized'] internally; poll until ready
-      var poll = setInterval(function() {
-        if (typeof cv !== 'undefined' && cv.Mat) {
-          clearInterval(poll);
-          onOpenCvReady();
-        }
-      }, 100);
-    };
-    script.onerror = function() {
-      // Fallback to official CDN
-      var s2 = document.createElement('script');
-      s2.src = 'https://docs.opencv.org/4.9.0/opencv.js';
-      s2.onload = function() {
-        var poll2 = setInterval(function() {
-          if (typeof cv !== 'undefined' && cv.Mat) {
-            clearInterval(poll2);
-            onOpenCvReady();
-          }
-        }, 100);
-      };
-      s2.onerror = function() {
-        document.getElementById('cv-label').textContent = 'CV unavailable';
-      };
-      document.head.appendChild(s2);
-    };
-    document.head.appendChild(script);
-  })();
-</script>
+<!-- No external CV library needed — uses native Canvas pixel sampling -->
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
 
@@ -596,8 +562,8 @@
 <header>
   <div class="logo">Olympiad<span>Scan</span></div>
   <div class="cv-status">
-    <div class="cv-dot" id="cv-dot"></div>
-    <span id="cv-label">Loading…</span>
+    <div class="cv-dot ready" id="cv-dot"></div>
+    <span id="cv-label">Ready</span>
   </div>
 </header>
 
@@ -707,7 +673,6 @@
 // ══════════════════════════════════════
 // STATE
 // ══════════════════════════════════════
-let cvReady = false;
 let stream = null;
 let events = JSON.parse(localStorage.getItem('so_events') || '[]');
 let results = JSON.parse(localStorage.getItem('so_results') || '[]');
@@ -720,13 +685,6 @@ const CHOICES = ['A','B','C','D','E'];
 // ══════════════════════════════════════
 // OPENCV READY
 // ══════════════════════════════════════
-function onOpenCvReady() {
-  cvReady = true;
-  document.getElementById('cv-dot').classList.add('ready');
-  document.getElementById('cv-label').textContent = 'CV Ready';
-}
-// onOpenCvReady() is called by the script loader above when CV is ready
-
 // ══════════════════════════════════════
 // TABS
 // ══════════════════════════════════════
@@ -790,13 +748,9 @@ function captureFrame() {
 }
 
 // ══════════════════════════════════════
-// IMAGE PROCESSING (OpenCV.js)
+// IMAGE PROCESSING (Canvas pixel sampling)
 // ══════════════════════════════════════
 function processImage(img) {
-  if (!cvReady) {
-    showToast('OpenCV still loading, please wait…');
-    return;
-  }
 
   const canvas = document.getElementById('processing-canvas');
   canvas.width = img.width;
@@ -804,87 +758,127 @@ function processImage(img) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0);
 
+  // ── Calibrated grid (measured from reference scan IMG_0569.png) ──
+  // Registration marks: TL(48,560) TR(1120,560) BL(48,1971) BR(1120,1971)
+  // Reference image size: 1170 x 2532
+  const REF_W = 1170, REF_H = 2532;
+  const REG = { TL:{x:48,y:560}, TR:{x:1120,y:560}, BL:{x:48,y:1971}, BR:{x:1120,y:1971} };
+  const LEFT_X  = [158, 199, 241, 282, 324];  // A B C D E (Q1-25)
+  const RIGHT_X = [682, 724, 765, 807, 848];  // A B C D E (Q26-50)
+  const GRID_START_Y = 782;
+  const GRID_STEP_Y  = 38;
+  const SAMPLE_R = 8;           // pixel radius to average for fill detection
+  const FILL_THRESHOLD = 180;   // mean brightness below this = filled bubble
+  const UNCERTAIN_THRESHOLD = 210; // above fill but below this = flag as uncertain
+
   try {
-    // Read image into OpenCV Mat
-    let src = cv.imread(canvas);
-    let gray = new cv.Mat();
-    let blurred = new cv.Mat();
-    let thresh = new cv.Mat();
-    let hierarchy = new cv.Mat();
-    let contours = new cv.MatVector();
+    const ctx = canvas.getContext('2d');
+    const iw = canvas.width, ih = canvas.height;
 
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-    cv.adaptiveThreshold(blurred, thresh, 255,
-      cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+    // ── Find registration marks to compute perspective transform ──
+    // We locate the 4 corner dots by finding the darkest circular blobs
+    // near each expected corner location, then compute scale + offset.
 
-    cv.findContours(thresh, contours, hierarchy,
-      cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-    // Collect circular-ish blobs that could be bubbles
-    let bubbleCandidates = [];
-    for (let i = 0; i < contours.size(); i++) {
-      const cnt = contours.get(i);
-      const area = cv.contourArea(cnt);
-      const rect = cv.boundingRect(cnt);
-      const aspectRatio = rect.width / rect.height;
-      // Bubbles: roughly square, reasonable size
-      if (area > 80 && area < 8000 && aspectRatio > 0.6 && aspectRatio < 1.6) {
-        // Circularity check
-        const perimeter = cv.arcLength(cnt, true);
-        const circularity = perimeter > 0 ? (4 * Math.PI * area) / (perimeter * perimeter) : 0;
-        if (circularity > 0.3) {
-          bubbleCandidates.push({
-            x: rect.x + rect.width / 2,
-            y: rect.y + rect.height / 2,
-            area,
-            rect,
-            circularity
-          });
-        }
+    // Helper: sample mean brightness in a region
+    function sampleBrightness(cx, cy, r) {
+      const x0 = Math.max(0, Math.round(cx - r));
+      const y0 = Math.max(0, Math.round(cy - r));
+      const x1 = Math.min(iw - 1, Math.round(cx + r));
+      const y1 = Math.min(ih - 1, Math.round(cy + r));
+      if (x1 <= x0 || y1 <= y0) return 255;
+      const d = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+      let sum = 0, count = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        sum += 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+        count++;
       }
-      cnt.delete();
+      return count > 0 ? sum / count : 255;
     }
 
-    src.delete(); gray.delete(); blurred.delete();
-    thresh.delete(); contours.delete(); hierarchy.delete();
+    // Find actual registration mark positions by searching near expected corners
+    // Scale expected coords to actual image size
+    function findRegMark(refX, refY) {
+      const sx = (refX / REF_W) * iw;
+      const sy = (refY / REF_H) * ih;
+      const searchR = iw * 0.06; // search within 6% of image width
+      let bestX = sx, bestY = sy, bestBright = 999;
+      const step = Math.max(2, Math.round(searchR / 15));
+      for (let dy = -searchR; dy <= searchR; dy += step) {
+        for (let dx = -searchR; dx <= searchR; dx += step) {
+          const b = sampleBrightness(sx + dx, sy + dy, iw * 0.01);
+          if (b < bestBright) { bestBright = b; bestX = sx+dx; bestY = sy+dy; }
+        }
+      }
+      return { x: bestX, y: bestY };
+    }
 
-    // Use simulated grading since real bubble mapping requires calibrated templates
-    // For a real deployment, you'd use registration marks to map grid positions
-    detectedAnswers = simulateDetection(bubbleCandidates, img.width, img.height);
-    uncertainFlags = detectedAnswers.map((a, i) =>
-      a === '' || (Math.random() < 0.1) // flag ~10% as uncertain for demo
-    );
+    const tl = findRegMark(REG.TL.x, REG.TL.y);
+    const tr = findRegMark(REG.TR.x, REG.TR.y);
+    const bl = findRegMark(REG.BL.x, REG.BL.y);
+
+    // Compute affine mapping: ref coords → image coords
+    // Use TL as origin, TR for X scale/skew, BL for Y scale/skew
+    const scaleX = (tr.x - tl.x) / (REG.TR.x - REG.TL.x);
+    const scaleY = (bl.y - tl.y) / (REG.BL.y - REG.TL.y);
+    const skewX  = (bl.x - tl.x) / (REG.BL.y - REG.TL.y);
+    const skewY  = (tr.y - tl.y) / (REG.TR.x - REG.TL.x);
+    const offX   = tl.x - REG.TL.x * scaleX;
+    const offY   = tl.y - REG.TL.y * scaleY;
+
+    function refToImg(rx, ry) {
+      return {
+        x: rx * scaleX + ry * skewX + offX,
+        y: ry * scaleY + rx * skewY + offY
+      };
+    }
+
+    // ── Read each bubble ──
+    detectedAnswers = [];
+    uncertainFlags  = [];
+    const sampleRadius = Math.round(SAMPLE_R * scaleX);
+
+    for (let q = 0; q < NUM_Q; q++) {
+      const col    = q < 25 ? 0 : 1;
+      const row    = q % 25;
+      const xArr   = col === 0 ? LEFT_X : RIGHT_X;
+      const refY   = GRID_START_Y + row * GRID_STEP_Y;
+
+      // Sample brightness for each choice
+      const brightnesses = xArr.map(rx => {
+        const { x, y } = refToImg(rx, refY);
+        return sampleBrightness(x, y, sampleRadius);
+      });
+
+      const minB  = Math.min(...brightnesses);
+      const minIdx = brightnesses.indexOf(minB);
+
+      if (minB > UNCERTAIN_THRESHOLD) {
+        // All bubbles are bright → blank
+        detectedAnswers.push('');
+        uncertainFlags.push(false);
+      } else if (minB > FILL_THRESHOLD) {
+        // Kinda dark but not confident
+        detectedAnswers.push(CHOICES[minIdx]);
+        uncertainFlags.push(true);
+      } else {
+        // Clearly filled
+        // Check if 2nd darkest is also dark (double-bubble)
+        const sorted = [...brightnesses].sort((a,b) => a-b);
+        const isDouble = sorted[1] < FILL_THRESHOLD + 30;
+        detectedAnswers.push(CHOICES[minIdx]);
+        uncertainFlags.push(isDouble);
+      }
+    }
 
   } catch(e) {
-    console.warn('OpenCV error, using simulation', e);
-    detectedAnswers = simulateDetection([], 0, 0);
-    uncertainFlags = Array(NUM_Q).fill(false);
-    uncertainFlags[3] = true; uncertainFlags[11] = true; uncertainFlags[24] = true;
+    console.warn('Detection error:', e);
+    // Fallback: blank everything so human can fill in
+    detectedAnswers = Array(NUM_Q).fill('');
+    uncertainFlags  = Array(NUM_Q).fill(true);
+    showToast('Detection failed — please fill in answers manually');
   }
 
   showConfirmation();
-}
-
-function simulateDetection(candidates, w, h) {
-  // Without a calibrated template, we use a smart simulation
-  // In production: map candidate positions to grid cells using perspective transform
-  const answers = [];
-  for (let i = 0; i < NUM_Q; i++) {
-    const r = Math.random();
-    if (r < 0.03) { answers.push(''); } // blank
-    else {
-      const eventSel = document.getElementById('scan-event-select').value;
-      const ev = events.find(e => e.name === eventSel);
-      // Mostly detect the correct answer with occasional errors
-      if (ev && Math.random() > 0.15) {
-        answers.push(ev.key[i] || CHOICES[Math.floor(Math.random() * 5)]);
-      } else {
-        answers.push(CHOICES[Math.floor(Math.random() * 5)]);
-      }
-    }
-  }
-  return answers;
 }
 
 // ══════════════════════════════════════
