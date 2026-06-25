@@ -1,0 +1,1229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>OlympiadScan</title>
+<!-- No external CV library needed — uses native Canvas pixel sampling -->
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
+
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --border: #1e2d45;
+    --accent: #3b82f6;
+    --accent2: #60a5fa;
+    --gold: #f59e0b;
+    --green: #10b981;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --text: #f0f4ff;
+    --text2: #8899bb;
+    --mono: 'Space Mono', monospace;
+    --sans: 'Space Grotesk', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+  .logo span { color: var(--accent); }
+  .cv-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cv-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text2);
+    transition: background 0.3s;
+  }
+  .cv-dot.ready { background: var(--green); }
+
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex: 1;
+    min-width: 80px;
+    padding: 12px 8px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+  }
+  .tab.active {
+    color: var(--accent2);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ── Pages ── */
+  .page { display: none; padding: 20px; }
+  .page.active { display: block; }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text2);
+    margin-bottom: 14px;
+  }
+
+  /* ── Inputs ── */
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+    margin-bottom: 6px;
+    letter-spacing: 0.3px;
+  }
+  input[type=text], select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 14px;
+    font-family: var(--sans);
+    font-size: 15px;
+    color: var(--text);
+    outline: none;
+    margin-bottom: 14px;
+    -webkit-appearance: none;
+    transition: border-color 0.2s;
+  }
+  input[type=text]:focus, select:focus {
+    border-color: var(--accent);
+  }
+  select option { background: var(--surface2); }
+
+  /* ── Buttons ── */
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 14px;
+    border-radius: 10px;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:active { background: #2563eb; transform: scale(0.98); }
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:active { transform: scale(0.98); }
+  .btn-green { background: var(--green); color: #fff; }
+  .btn-green:active { background: #059669; transform: scale(0.98); }
+  .btn-red { background: var(--red); color: #fff; }
+  .btn-danger { background: #7f1d1d; color: var(--red); border: 1px solid #991b1b; }
+  .btn + .btn { margin-top: 10px; }
+  .btn:disabled { opacity: 0.4; pointer-events: none; }
+
+  /* ── Answer Key Builder ── */
+  .key-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .key-question {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 4px;
+    text-align: center;
+  }
+  .key-q-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text2);
+    margin-bottom: 6px;
+  }
+  .key-q-select {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--accent2);
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 700;
+    text-align: center;
+    cursor: pointer;
+    outline: none;
+    padding: 0;
+    margin: 0;
+    -webkit-appearance: none;
+  }
+
+  /* ── Events list ── */
+  .event-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+  .event-name { font-weight: 600; font-size: 15px; }
+  .event-meta { font-size: 12px; color: var(--text2); margin-top: 2px; font-family: var(--mono); }
+  .event-actions { display: flex; gap: 8px; }
+  .icon-btn {
+    width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.15s;
+  }
+  .icon-btn:active { transform: scale(0.92); }
+
+  /* ── Scanner ── */
+  .scan-select-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .scan-select-row select { margin-bottom: 0; }
+
+  #camera-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 3/4;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 14px;
+    border: 2px solid var(--border);
+  }
+  #video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  #canvas-overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+  .scan-guide {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 85%;
+    aspect-ratio: 3/4;
+    border: 2px dashed rgba(59,130,246,0.5);
+    border-radius: 8px;
+    pointer-events: none;
+  }
+  .scan-hint {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.7);
+    color: #fff;
+    font-size: 12px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    white-space: nowrap;
+    font-family: var(--mono);
+  }
+  .shutter-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin-bottom: 14px;
+  }
+  .shutter-btn {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: #fff;
+    border: 4px solid var(--accent);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.1s;
+    box-shadow: 0 0 0 6px rgba(59,130,246,0.2);
+  }
+  .shutter-btn:active { transform: scale(0.93); }
+
+  /* ── Confirmation ── */
+  #confirm-section { display: none; }
+  .bubble-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+  .bubble-cell {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 4px;
+    text-align: center;
+    position: relative;
+  }
+  .bubble-cell.uncertain {
+    border-color: var(--amber);
+    background: rgba(245,158,11,0.08);
+  }
+  .bubble-cell.uncertain::after {
+    content: '?';
+    position: absolute;
+    top: 2px; right: 4px;
+    font-size: 9px;
+    color: var(--amber);
+    font-weight: 700;
+  }
+  .bubble-q {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text2);
+    margin-bottom: 4px;
+  }
+  .bubble-answer {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--accent2);
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+    cursor: pointer;
+    outline: none;
+    padding: 0;
+    -webkit-appearance: none;
+  }
+  .bubble-answer.blank { color: var(--text2); }
+
+  /* ── Results ── */
+  .score-hero {
+    text-align: center;
+    padding: 28px 20px;
+    background: linear-gradient(135deg, var(--surface2) 0%, #0f1e35 100%);
+    border-radius: 12px;
+    margin-bottom: 14px;
+    border: 1px solid var(--border);
+  }
+  .score-pct {
+    font-family: var(--mono);
+    font-size: 56px;
+    font-weight: 700;
+    color: var(--accent2);
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .score-fraction {
+    font-family: var(--mono);
+    font-size: 18px;
+    color: var(--text2);
+    margin-bottom: 12px;
+  }
+  .score-meta { font-size: 13px; color: var(--text2); }
+  .score-meta strong { color: var(--text); }
+
+  .result-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--surface2);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    border: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .result-row.correct { border-left: 3px solid var(--green); }
+  .result-row.wrong { border-left: 3px solid var(--red); }
+  .result-row.blank { border-left: 3px solid var(--text2); }
+  .result-q { color: var(--text2); font-size: 11px; }
+  .result-got { font-size: 15px; font-weight: 700; }
+  .result-got.c { color: var(--green); }
+  .result-got.w { color: var(--red); }
+  .result-got.b { color: var(--text2); }
+  .result-key { font-size: 12px; color: var(--text2); }
+
+  /* ── Leaderboard ── */
+  .lb-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 8px;
+  }
+  .lb-rank {
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text2);
+    min-width: 28px;
+  }
+  .lb-rank.gold { color: #f59e0b; }
+  .lb-rank.silver { color: #94a3b8; }
+  .lb-rank.bronze { color: #92400e; }
+  .lb-info { flex: 1; }
+  .lb-team { font-weight: 600; font-size: 15px; }
+  .lb-event { font-size: 12px; color: var(--text2); font-family: var(--mono); }
+  .lb-score {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent2);
+  }
+  .lb-pct { font-size: 11px; color: var(--text2); text-align: right; font-family: var(--mono); }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text2);
+    font-size: 14px;
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 22px;
+    border-radius: 30px;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    transition: transform 0.3s ease;
+    z-index: 999;
+    white-space: nowrap;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  .divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+  .filter-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 14px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .filter-row::-webkit-scrollbar { display: none; }
+  .filter-chip {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text2);
+    white-space: nowrap;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: all 0.15s;
+  }
+  .filter-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  /* hidden canvas for processing */
+  #processing-canvas { display: none; }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    align-items: flex-end;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    padding: 24px 20px 40px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+  .modal-handle {
+    width: 40px; height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 0 auto 20px;
+  }
+
+  .progress-bar-wrap {
+    height: 6px;
+    background: var(--surface2);
+    border-radius: 3px;
+    margin: 8px 0 16px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+
+  .scan-captured {
+    display: none;
+    width: 100%;
+    border-radius: 10px;
+    margin-bottom: 14px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Olympiad<span>Scan</span></div>
+  <div class="cv-status">
+    <div class="cv-dot ready" id="cv-dot"></div>
+    <span id="cv-label">Ready</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('scan')">📷 Scan</div>
+  <div class="tab" onclick="switchTab('events')">📋 Events</div>
+  <div class="tab" onclick="switchTab('results')">🏆 Results</div>
+</div>
+
+<!-- ════════════════════════════════ SCAN PAGE ════════════════════════════════ -->
+<div class="page active" id="page-scan">
+
+  <!-- Camera -->
+  <div id="scan-section">
+    <div class="card">
+      <div class="card-title">Select Event</div>
+      <div class="scan-select-row">
+        <div>
+          <label>Event</label>
+          <select id="scan-event-select" onchange="updateScanKey()">
+            <option value="">— choose —</option>
+          </select>
+        </div>
+        <div>
+          <label>Team Name</label>
+          <input type="text" id="scan-team" placeholder="e.g. Alpha-1">
+        </div>
+      </div>
+    </div>
+
+    <div id="camera-container">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas-overlay"></canvas>
+      <div class="scan-guide"></div>
+      <div class="scan-hint" id="scan-hint">Align sheet within frame</div>
+    </div>
+
+    <div class="shutter-row">
+      <button class="shutter-btn" onclick="captureFrame()" title="Capture">📸</button>
+    </div>
+
+    <div class="btn btn-secondary" onclick="triggerFileUpload()">📂 Upload Image Instead</div>
+    <input type="file" id="file-input" accept="image/*" style="display:none" onchange="handleFileUpload(event)">
+  </div>
+
+  <!-- Confirmation -->
+  <div id="confirm-section">
+    <div class="card">
+      <div class="card-title">Review Detected Answers</div>
+      <img id="scan-captured" class="scan-captured">
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;">
+        Highlighted cells (⚠) had low confidence. Tap any answer to correct it.
+      </p>
+      <div class="bubble-grid" id="bubble-grid"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Score Preview</div>
+      <div class="score-hero" id="preview-score-hero">
+        <div class="score-pct" id="preview-pct">—</div>
+        <div class="score-fraction" id="preview-frac">— / 50</div>
+        <div class="score-meta" id="preview-meta"></div>
+      </div>
+    </div>
+
+    <button class="btn btn-green" onclick="submitResult()">✅ Submit Score</button>
+    <button class="btn btn-secondary" style="margin-top:10px" onclick="rescan()">🔄 Re-scan</button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════ EVENTS PAGE ════════════════════════════════ -->
+<div class="page" id="page-events">
+  <div class="card">
+    <div class="card-title">Add Event</div>
+    <label>Event Name</label>
+    <input type="text" id="new-event-name" placeholder="e.g. Astronomy">
+    <div id="key-builder"></div>
+    <button class="btn btn-primary" onclick="saveEvent()">Save Event + Answer Key</button>
+  </div>
+
+  <div id="events-list"></div>
+</div>
+
+<!-- ════════════════════════════════ RESULTS PAGE ════════════════════════════════ -->
+<div class="page" id="page-results">
+  <div class="filter-row" id="filter-row">
+    <div class="filter-chip active" onclick="filterResults('all', this)">All Events</div>
+  </div>
+  <div id="leaderboard"></div>
+</div>
+
+<canvas id="processing-canvas"></canvas>
+<div class="toast" id="toast"></div>
+
+<!-- Modal for editing event key -->
+<div class="modal-overlay" id="edit-modal">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="card-title" style="margin-bottom:14px">Edit Answer Key</div>
+    <div id="edit-key-builder"></div>
+    <button class="btn btn-primary" onclick="saveEditedKey()">Save Changes</button>
+    <button class="btn btn-secondary" style="margin-top:10px" onclick="closeEditModal()">Cancel</button>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════
+// STATE
+// ══════════════════════════════════════
+let stream = null;
+let events = JSON.parse(localStorage.getItem('so_events') || '[]');
+let results = JSON.parse(localStorage.getItem('so_results') || '[]');
+let detectedAnswers = [];
+let uncertainFlags = [];
+let editingEventIdx = null;
+const NUM_Q = 50;
+const CHOICES = ['A','B','C','D','E'];
+
+// ══════════════════════════════════════
+// OPENCV READY
+// ══════════════════════════════════════
+// ══════════════════════════════════════
+// TABS
+// ══════════════════════════════════════
+function switchTab(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'events') renderEvents();
+  if (name === 'results') renderResults();
+  if (name === 'scan') populateScanDropdown();
+}
+
+// ══════════════════════════════════════
+// CAMERA
+// ══════════════════════════════════════
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    document.getElementById('video').srcObject = stream;
+  } catch(e) {
+    document.getElementById('scan-hint').textContent = 'Camera unavailable — use Upload';
+  }
+}
+startCamera();
+
+function triggerFileUpload() {
+  document.getElementById('file-input').click();
+}
+
+function handleFileUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => processImage(img);
+    img.src = ev.target.result;
+    document.getElementById('scan-captured').src = ev.target.result;
+    document.getElementById('scan-captured').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function captureFrame() {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('processing-canvas');
+  canvas.width = video.videoWidth || 640;
+  canvas.height = video.videoHeight || 480;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  document.getElementById('scan-captured').src = dataUrl;
+  document.getElementById('scan-captured').style.display = 'block';
+  const img = new Image();
+  img.onload = () => processImage(img);
+  img.src = dataUrl;
+}
+
+// ══════════════════════════════════════
+// IMAGE PROCESSING (Canvas pixel sampling)
+// ══════════════════════════════════════
+function processImage(img) {
+
+  const canvas = document.getElementById('processing-canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+
+  // ── Calibrated grid (measured from reference scan IMG_0569.png) ──
+  const REF_W = 1170, REF_H = 2532;
+  const REG = { TL:{x:48,y:560}, TR:{x:1120,y:560}, BL:{x:48,y:1971}, BR:{x:1120,y:1971} };
+  const LEFT_X  = [158, 199, 241, 282, 324];
+  const RIGHT_X = [682, 724, 765, 807, 848];
+  const GRID_START_Y = 782;
+  const GRID_STEP_Y  = 38;
+  const SAMPLE_R = 8;
+  const FILL_THRESHOLD = 150;
+  const UNCERTAIN_THRESHOLD = 185;
+
+  try {
+    const ctx = canvas.getContext('2d');
+    const iw = canvas.width, ih = canvas.height;
+
+    // ── Sample mean brightness at a point ──
+    function sampleBrightness(cx, cy, r) {
+      const x0 = Math.max(0, Math.round(cx - r));
+      const y0 = Math.max(0, Math.round(cy - r));
+      const x1 = Math.min(iw - 1, Math.round(cx + r));
+      const y1 = Math.min(ih - 1, Math.round(cy + r));
+      if (x1 <= x0 || y1 <= y0) return 255;
+      const d = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+      let sum = 0, count = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        sum += 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+        count++;
+      }
+      return count > 0 ? sum / count : 255;
+    }
+
+    // ── Find a registration mark by searching for darkest spot near expected location ──
+    function findRegMark(refX, refY) {
+      const sx = (refX / REF_W) * iw;
+      const sy = (refY / REF_H) * ih;
+      const searchR = iw * 0.10; // search within 10% of image width
+      const probeR  = Math.round(iw * 0.012);
+      let bestX = sx, bestY = sy, bestB = 999;
+      const step = Math.max(3, Math.round(searchR / 20));
+      for (let dy = -searchR; dy <= searchR; dy += step) {
+        for (let dx = -searchR; dx <= searchR; dx += step) {
+          const b = sampleBrightness(sx + dx, sy + dy, probeR);
+          if (b < bestB) { bestB = b; bestX = sx + dx; bestY = sy + dy; }
+        }
+      }
+      return { x: bestX, y: bestY, b: bestB };
+    }
+
+    const tl = findRegMark(REG.TL.x, REG.TL.y);
+    const tr = findRegMark(REG.TR.x, REG.TR.y);
+    const bl = findRegMark(REG.BL.x, REG.BL.y);
+    const br = findRegMark(REG.BR.x, REG.BR.y);
+
+    // ── Perspective transform: maps reference coords → image coords ──
+    // Solve H such that H * [rx,ry,1]^T = [ix,iy,1]^T
+    // Using the Direct Linear Transform (DLT) with 4 point correspondences
+    // src = reference corners, dst = found image corners
+    const srcPts = [
+      [REG.TL.x, REG.TL.y], [REG.TR.x, REG.TR.y],
+      [REG.BL.x, REG.BL.y], [REG.BR.x, REG.BR.y]
+    ];
+    const dstPts = [
+      [tl.x, tl.y], [tr.x, tr.y],
+      [bl.x, bl.y], [br.x, br.y]
+    ];
+
+    // Build 8x8 matrix A for DLT
+    function getPerspectiveTransform(src, dst) {
+      const A = [];
+      for (let i = 0; i < 4; i++) {
+        const [sx, sy] = src[i];
+        const [dx, dy] = dst[i];
+        A.push([-sx, -sy, -1,   0,   0,  0, dx*sx, dx*sy, dx]);
+        A.push([  0,   0,  0, -sx, -sy, -1, dy*sx, dy*sy, dy]);
+      }
+      // Solve using Gaussian elimination (8 equations, 8 unknowns h0..h7, h8=1)
+      // Reduce to 8x8 by substituting h8=1
+      const M = A.map(row => [...row.slice(0,8), -row[8]]);
+      // Forward elimination
+      for (let col = 0; col < 8; col++) {
+        let maxRow = col;
+        for (let r = col+1; r < 8; r++) if (Math.abs(M[r][col]) > Math.abs(M[maxRow][col])) maxRow = r;
+        [M[col], M[maxRow]] = [M[maxRow], M[col]];
+        for (let r = col+1; r < 8; r++) {
+          const f = M[r][col] / M[col][col];
+          for (let c = col; c <= 8; c++) M[r][c] -= f * M[col][c];
+        }
+      }
+      // Back substitution
+      const h = new Array(9).fill(0);
+      h[8] = 1;
+      for (let r = 7; r >= 0; r--) {
+        h[r] = M[r][8];
+        for (let c = r+1; c < 8; c++) h[r] -= M[r][c] * h[c];
+        h[r] /= M[r][r];
+      }
+      return h; // [h0..h8]
+    }
+
+    const H = getPerspectiveTransform(srcPts, dstPts);
+
+    function refToImg(rx, ry) {
+      const w = H[6]*rx + H[7]*ry + H[8];
+      return {
+        x: (H[0]*rx + H[1]*ry + H[2]) / w,
+        y: (H[3]*rx + H[4]*ry + H[5]) / w
+      };
+    }
+
+    // Scale sample radius to image size relative to reference
+    const scaleEst = (tr.x - tl.x) / (REG.TR.x - REG.TL.x);
+    const sampleRadius = Math.round(SAMPLE_R * scaleEst);
+
+    // ── Read each bubble ──
+    detectedAnswers = [];
+    uncertainFlags  = [];
+
+    for (let q = 0; q < NUM_Q; q++) {
+      const col  = q < 25 ? 0 : 1;
+      const row  = q % 25;
+      const xArr = col === 0 ? LEFT_X : RIGHT_X;
+      const refY = GRID_START_Y + row * GRID_STEP_Y;
+
+      const brightnesses = xArr.map(rx => {
+        const { x, y } = refToImg(rx, refY);
+        return sampleBrightness(x, y, sampleRadius);
+      });
+
+      const minB   = Math.min(...brightnesses);
+      const minIdx = brightnesses.indexOf(minB);
+      const sorted = [...brightnesses].sort((a,b) => a-b);
+      const isDouble = sorted[1] < FILL_THRESHOLD + 25;
+
+      if (minB > UNCERTAIN_THRESHOLD) {
+        detectedAnswers.push('');
+        uncertainFlags.push(false);
+      } else if (minB > FILL_THRESHOLD) {
+        detectedAnswers.push(CHOICES[minIdx]);
+        uncertainFlags.push(true);
+      } else {
+        detectedAnswers.push(CHOICES[minIdx]);
+        uncertainFlags.push(isDouble);
+      }
+    }
+    }
+
+  } catch(e) {
+    console.warn('Detection error:', e);
+    // Fallback: blank everything so human can fill in
+    detectedAnswers = Array(NUM_Q).fill('');
+    uncertainFlags  = Array(NUM_Q).fill(true);
+    showToast('Detection failed — please fill in answers manually');
+  }
+
+  showConfirmation();
+}
+
+// ══════════════════════════════════════
+// CONFIRMATION SCREEN
+// ══════════════════════════════════════
+function showConfirmation() {
+  document.getElementById('scan-section').style.display = 'none';
+  document.getElementById('confirm-section').style.display = 'block';
+  buildBubbleGrid();
+  updatePreviewScore();
+}
+
+function buildBubbleGrid() {
+  const grid = document.getElementById('bubble-grid');
+  grid.innerHTML = '';
+  for (let i = 0; i < NUM_Q; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'bubble-cell' + (uncertainFlags[i] ? ' uncertain' : '');
+    cell.innerHTML = `
+      <div class="bubble-q">Q${i+1}</div>
+      <select class="bubble-answer ${detectedAnswers[i] === '' ? 'blank' : ''}"
+              onchange="answerChanged(${i}, this)">
+        <option value="">—</option>
+        ${CHOICES.map(c => `<option value="${c}" ${detectedAnswers[i]===c?'selected':''}>${c}</option>`).join('')}
+      </select>`;
+    grid.appendChild(cell);
+  }
+}
+
+function answerChanged(idx, sel) {
+  detectedAnswers[idx] = sel.value;
+  sel.className = 'bubble-answer' + (sel.value === '' ? ' blank' : '');
+  // Remove uncertain flag once edited
+  uncertainFlags[idx] = false;
+  sel.closest('.bubble-cell').classList.remove('uncertain');
+  updatePreviewScore();
+}
+
+function updatePreviewScore() {
+  const eventName = document.getElementById('scan-event-select').value;
+  const ev = events.find(e => e.name === eventName);
+  if (!ev) {
+    document.getElementById('preview-pct').textContent = '—';
+    document.getElementById('preview-frac').textContent = '— / ' + NUM_Q;
+    return;
+  }
+  let correct = 0, blanks = 0;
+  for (let i = 0; i < NUM_Q; i++) {
+    if (detectedAnswers[i] === '') blanks++;
+    else if (detectedAnswers[i] === ev.key[i]) correct++;
+  }
+  const pct = Math.round((correct / NUM_Q) * 100);
+  document.getElementById('preview-pct').textContent = pct + '%';
+  document.getElementById('preview-frac').textContent = correct + ' / ' + NUM_Q;
+  document.getElementById('preview-meta').innerHTML =
+    `<strong>${NUM_Q - correct - blanks}</strong> wrong &nbsp;·&nbsp; <strong>${blanks}</strong> blank`;
+}
+
+function rescan() {
+  document.getElementById('confirm-section').style.display = 'none';
+  document.getElementById('scan-section').style.display = 'block';
+  document.getElementById('scan-captured').style.display = 'none';
+  document.getElementById('file-input').value = '';
+}
+
+function submitResult() {
+  const eventName = document.getElementById('scan-event-select').value;
+  const team = document.getElementById('scan-team').value.trim();
+  if (!eventName) { showToast('Please select an event'); return; }
+  if (!team) { showToast('Please enter a team name'); return; }
+
+  const ev = events.find(e => e.name === eventName);
+  if (!ev) { showToast('Event not found'); return; }
+
+  let correct = 0, blanks = 0;
+  const breakdown = [];
+  for (let i = 0; i < NUM_Q; i++) {
+    const got = detectedAnswers[i];
+    const expected = ev.key[i];
+    const isCorrect = got === expected;
+    if (got === '') blanks++;
+    else if (isCorrect) correct++;
+    breakdown.push({ q: i+1, got, expected, correct: isCorrect });
+  }
+
+  const result = {
+    id: Date.now(),
+    event: eventName,
+    team,
+    correct,
+    total: NUM_Q,
+    blanks,
+    pct: Math.round((correct / NUM_Q) * 100),
+    breakdown,
+    timestamp: new Date().toLocaleTimeString()
+  };
+
+  results.push(result);
+  localStorage.setItem('so_results', JSON.stringify(results));
+  showToast(`✅ ${team} — ${correct}/${NUM_Q} saved`);
+  document.getElementById('scan-team').value = '';
+  rescan();
+}
+
+// ══════════════════════════════════════
+// EVENTS / ANSWER KEY
+// ══════════════════════════════════════
+function buildKeyBuilder(containerId, existing) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '<div class="card-title" style="margin-bottom:10px">Answer Key (50 Questions)</div>';
+  const grid = document.createElement('div');
+  grid.className = 'key-grid';
+  for (let i = 0; i < NUM_Q; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'key-question';
+    cell.innerHTML = `
+      <div class="key-q-num">${i+1}</div>
+      <select class="key-q-select" id="${containerId}-q${i}">
+        ${CHOICES.map(c => `<option value="${c}" ${(existing&&existing[i]===c)?'selected':''}>${c}</option>`).join('')}
+      </select>`;
+    grid.appendChild(cell);
+  }
+  container.appendChild(grid);
+}
+
+function readKey(containerId) {
+  const key = [];
+  for (let i = 0; i < NUM_Q; i++) {
+    const sel = document.getElementById(`${containerId}-q${i}`);
+    key.push(sel ? sel.value : 'A');
+  }
+  return key;
+}
+
+function saveEvent() {
+  const name = document.getElementById('new-event-name').value.trim();
+  if (!name) { showToast('Enter an event name'); return; }
+  if (events.find(e => e.name === name)) { showToast('Event already exists'); return; }
+  const key = readKey('key-builder');
+  events.push({ name, key });
+  localStorage.setItem('so_events', JSON.stringify(events));
+  document.getElementById('new-event-name').value = '';
+  buildKeyBuilder('key-builder', null);
+  renderEvents();
+  populateScanDropdown();
+  showToast('Event saved: ' + name);
+}
+
+function renderEvents() {
+  const list = document.getElementById('events-list');
+  list.innerHTML = '';
+  buildKeyBuilder('key-builder', null);
+
+  if (events.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="empty-icon">📋</div>No events yet. Add one above.</div>';
+    return;
+  }
+  events.forEach((ev, idx) => {
+    const div = document.createElement('div');
+    div.className = 'event-item';
+    div.innerHTML = `
+      <div>
+        <div class="event-name">${ev.name}</div>
+        <div class="event-meta">50 questions · A–E</div>
+      </div>
+      <div class="event-actions">
+        <div class="icon-btn" onclick="openEditModal(${idx})" title="Edit">✏️</div>
+        <div class="icon-btn" onclick="deleteEvent(${idx})" title="Delete">🗑️</div>
+      </div>`;
+    list.appendChild(div);
+  });
+}
+
+function deleteEvent(idx) {
+  if (!confirm(`Delete "${events[idx].name}"?`)) return;
+  events.splice(idx, 1);
+  localStorage.setItem('so_events', JSON.stringify(events));
+  renderEvents();
+  populateScanDropdown();
+}
+
+function openEditModal(idx) {
+  editingEventIdx = idx;
+  const ev = events[idx];
+  buildKeyBuilder('edit-key-builder', ev.key);
+  document.getElementById('edit-modal').classList.add('show');
+}
+function closeEditModal() {
+  document.getElementById('edit-modal').classList.remove('show');
+  editingEventIdx = null;
+}
+function saveEditedKey() {
+  if (editingEventIdx === null) return;
+  events[editingEventIdx].key = readKey('edit-key-builder');
+  localStorage.setItem('so_events', JSON.stringify(events));
+  closeEditModal();
+  showToast('Answer key updated');
+}
+
+function populateScanDropdown() {
+  const sel = document.getElementById('scan-event-select');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— choose —</option>';
+  events.forEach(ev => {
+    const opt = document.createElement('option');
+    opt.value = ev.name;
+    opt.textContent = ev.name;
+    if (ev.name === current) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+function updateScanKey() {}
+
+// ══════════════════════════════════════
+// RESULTS / LEADERBOARD
+// ══════════════════════════════════════
+let activeFilter = 'all';
+function filterResults(filter, el) {
+  activeFilter = filter;
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  renderLeaderboard();
+}
+
+function renderResults() {
+  // Build filter chips
+  const row = document.getElementById('filter-row');
+  row.innerHTML = '<div class="filter-chip active" onclick="filterResults(\'all\', this)">All Events</div>';
+  const seen = new Set();
+  results.forEach(r => {
+    if (!seen.has(r.event)) {
+      seen.add(r.event);
+      const chip = document.createElement('div');
+      chip.className = 'filter-chip';
+      chip.textContent = r.event;
+      chip.onclick = function() { filterResults(r.event, this); };
+      row.appendChild(chip);
+    }
+  });
+  renderLeaderboard();
+}
+
+function renderLeaderboard() {
+  const lb = document.getElementById('leaderboard');
+  let filtered = activeFilter === 'all' ? results : results.filter(r => r.event === activeFilter);
+  filtered = [...filtered].sort((a, b) => b.pct - a.pct);
+
+  if (filtered.length === 0) {
+    lb.innerHTML = '<div class="empty-state"><div class="empty-icon">🏆</div>No results yet. Start scanning!</div>';
+    return;
+  }
+
+  lb.innerHTML = '';
+  filtered.forEach((r, i) => {
+    const rankLabels = ['🥇', '🥈', '🥉'];
+    const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+    const row = document.createElement('div');
+    row.className = 'lb-row';
+    row.innerHTML = `
+      <div class="lb-rank ${rankClass}">${i < 3 ? rankLabels[i] : '#' + (i+1)}</div>
+      <div class="lb-info">
+        <div class="lb-team">${r.team}</div>
+        <div class="lb-event">${r.event} · ${r.timestamp}</div>
+      </div>
+      <div>
+        <div class="lb-score">${r.correct}/${r.total}</div>
+        <div class="lb-pct">${r.pct}%</div>
+      </div>`;
+    row.onclick = () => showDetailModal(r);
+    lb.appendChild(row);
+  });
+
+  // Clear all button
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn btn-danger';
+  clearBtn.style.marginTop = '16px';
+  clearBtn.textContent = '🗑 Clear All Results';
+  clearBtn.onclick = () => {
+    if (confirm('Clear all results?')) {
+      results = [];
+      localStorage.setItem('so_results', '[]');
+      renderResults();
+    }
+  };
+  lb.appendChild(clearBtn);
+}
+
+function showDetailModal(r) {
+  // Build a quick detail view in an alert — replace with modal in production
+  const wrong = r.breakdown.filter(b => !b.correct && b.got !== '');
+  const detail = wrong.map(b => `Q${b.q}: got ${b.got}, expected ${b.expected}`).join('\n');
+  alert(`${r.team} — ${r.event}\n${r.correct}/${r.total} (${r.pct}%)\n\nWrong answers:\n${detail || 'None!'}`);
+}
+
+// ══════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════
+let toastTimer = null;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ══════════════════════════════════════
+// INIT
+// ══════════════════════════════════════
+populateScanDropdown();
+buildKeyBuilder('key-builder', null);
+</script>
+</body>
+</html>
