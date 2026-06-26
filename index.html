@@ -280,15 +280,36 @@
     width: 100%; height: 100%;
     pointer-events: none;
   }
-  .scan-guide {
+  /* ── Alignment dots overlay ── */
+  .align-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+  .align-dot {
+    position: absolute;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: rgba(59,130,246,0.9);
+    border: 2px solid #fff;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.3);
+  }
+  /* Positions match the reg marks on the printed sheet:
+     margin 12% from each edge, matching the scantron corner dot layout */
+  .align-dot.tl { top: 12%; left: 12%; }
+  .align-dot.tr { top: 12%; left: 88%; }
+  .align-dot.bl { top: 88%; left: 12%; }
+  .align-dot.br { top: 88%; left: 88%; }
+  .align-dot-label {
     position: absolute;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
-    width: 85%;
-    aspect-ratio: 3/4;
-    border: 2px dashed rgba(59,130,246,0.5);
-    border-radius: 8px;
-    pointer-events: none;
+    font-size: 9px;
+    font-weight: 700;
+    color: #fff;
+    font-family: var(--mono);
+    line-height: 1;
   }
   .scan-hint {
     position: absolute;
@@ -597,8 +618,13 @@
     <div id="camera-container">
       <video id="video" autoplay playsinline muted></video>
       <canvas id="canvas-overlay"></canvas>
-      <div class="scan-guide"></div>
-      <div class="scan-hint" id="scan-hint">Align sheet within frame</div>
+      <div class="align-overlay">
+        <div class="align-dot tl"></div>
+        <div class="align-dot tr"></div>
+        <div class="align-dot bl"></div>
+        <div class="align-dot br"></div>
+      </div>
+      <div class="scan-hint" id="scan-hint">Line up the 4 paper dots with the 4 blue dots</div>
     </div>
 
     <div class="shutter-row">
@@ -766,8 +792,8 @@ function processImage(img) {
   const GRID_START_Y = 782;
   const GRID_STEP_Y  = 38;
   const SAMPLE_R = 8;
-  const FILL_THRESHOLD = 150;
-  const UNCERTAIN_THRESHOLD = 185;
+  const FILL_THRESHOLD = 140;
+  const UNCERTAIN_THRESHOLD = 160;
 
   try {
     const iw = canvas.width, ih = canvas.height;
@@ -788,36 +814,14 @@ function processImage(img) {
       return count > 0 ? sum / count : 255;
     }
 
-    // ── Find registration marks by scanning each image quadrant ──
-    // We search each quadrant for the darkest circular-ish blob,
-    // which handles sheets that don't fill the entire frame.
-    function findRegMarkInQuadrant(x0, y0, x1, y1) {
-      const step = Math.max(4, Math.round((x1 - x0) / 40));
-      const probeR = Math.round(Math.min(iw, ih) * 0.012);
-      let bestX = (x0+x1)/2, bestY = (y0+y1)/2, bestB = 999;
-      for (let y = y0; y < y1; y += step) {
-        for (let x = x0; x < x1; x += step) {
-          const b = sampleBrightness(x, y, probeR);
-          if (b < bestB) { bestB = b; bestX = x; bestY = y; }
-        }
-      }
-      // Refine with smaller step around best
-      const refineR = step * 2;
-      const fineStep = Math.max(1, Math.round(step / 4));
-      for (let y = bestY - refineR; y <= bestY + refineR; y += fineStep) {
-        for (let x = bestX - refineR; x <= bestX + refineR; x += fineStep) {
-          const b = sampleBrightness(x, y, probeR);
-          if (b < bestB) { bestB = b; bestX = x; bestY = y; }
-        }
-      }
-      return { x: bestX, y: bestY, b: bestB };
-    }
-
-    const midX = iw / 2, midY = ih / 2;
-    const tl = findRegMarkInQuadrant(0,    0,    midX, midY);
-    const tr = findRegMarkInQuadrant(midX, 0,    iw,   midY);
-    const bl = findRegMarkInQuadrant(0,    midY, midX, ih);
-    const br = findRegMarkInQuadrant(midX, midY, iw,   ih);
+    // ── Use fixed alignment dot positions as registration marks ──
+    // The overlay dots are at 12%/88% of the camera frame dimensions.
+    // When the user lines up the paper dots with these, we know exactly
+    // where the reg marks are in the captured image.
+    const tl = { x: iw * 0.12, y: ih * 0.12 };
+    const tr = { x: iw * 0.88, y: ih * 0.12 };
+    const bl = { x: iw * 0.12, y: ih * 0.88 };
+    const br = { x: iw * 0.88, y: ih * 0.88 };
 
     // ── Perspective transform: maps reference coords → image coords ──
     // Solve H such that H * [rx,ry,1]^T = [ix,iy,1]^T
