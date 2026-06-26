@@ -788,27 +788,36 @@ function processImage(img) {
       return count > 0 ? sum / count : 255;
     }
 
-    // ── Find a registration mark by searching for darkest spot near expected location ──
-    function findRegMark(refX, refY) {
-      const sx = (refX / REF_W) * iw;
-      const sy = (refY / REF_H) * ih;
-      const searchR = iw * 0.10; // search within 10% of image width
-      const probeR  = Math.round(iw * 0.012);
-      let bestX = sx, bestY = sy, bestB = 999;
-      const step = Math.max(3, Math.round(searchR / 20));
-      for (let dy = -searchR; dy <= searchR; dy += step) {
-        for (let dx = -searchR; dx <= searchR; dx += step) {
-          const b = sampleBrightness(sx + dx, sy + dy, probeR);
-          if (b < bestB) { bestB = b; bestX = sx + dx; bestY = sy + dy; }
+    // ── Find registration marks by scanning each image quadrant ──
+    // We search each quadrant for the darkest circular-ish blob,
+    // which handles sheets that don't fill the entire frame.
+    function findRegMarkInQuadrant(x0, y0, x1, y1) {
+      const step = Math.max(4, Math.round((x1 - x0) / 40));
+      const probeR = Math.round(Math.min(iw, ih) * 0.012);
+      let bestX = (x0+x1)/2, bestY = (y0+y1)/2, bestB = 999;
+      for (let y = y0; y < y1; y += step) {
+        for (let x = x0; x < x1; x += step) {
+          const b = sampleBrightness(x, y, probeR);
+          if (b < bestB) { bestB = b; bestX = x; bestY = y; }
+        }
+      }
+      // Refine with smaller step around best
+      const refineR = step * 2;
+      const fineStep = Math.max(1, Math.round(step / 4));
+      for (let y = bestY - refineR; y <= bestY + refineR; y += fineStep) {
+        for (let x = bestX - refineR; x <= bestX + refineR; x += fineStep) {
+          const b = sampleBrightness(x, y, probeR);
+          if (b < bestB) { bestB = b; bestX = x; bestY = y; }
         }
       }
       return { x: bestX, y: bestY, b: bestB };
     }
 
-    const tl = findRegMark(REG.TL.x, REG.TL.y);
-    const tr = findRegMark(REG.TR.x, REG.TR.y);
-    const bl = findRegMark(REG.BL.x, REG.BL.y);
-    const br = findRegMark(REG.BR.x, REG.BR.y);
+    const midX = iw / 2, midY = ih / 2;
+    const tl = findRegMarkInQuadrant(0,    0,    midX, midY);
+    const tr = findRegMarkInQuadrant(midX, 0,    iw,   midY);
+    const bl = findRegMarkInQuadrant(0,    midY, midX, ih);
+    const br = findRegMarkInQuadrant(midX, midY, iw,   ih);
 
     // ── Perspective transform: maps reference coords → image coords ──
     // Solve H such that H * [rx,ry,1]^T = [ix,iy,1]^T
