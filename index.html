@@ -770,7 +770,6 @@ function processImage(img) {
   const UNCERTAIN_THRESHOLD = 185;
 
   try {
-    const ctx = canvas.getContext('2d');
     const iw = canvas.width, ih = canvas.height;
 
     // ── Sample mean brightness at a point ──
@@ -901,7 +900,6 @@ function processImage(img) {
         detectedAnswers.push(CHOICES[minIdx]);
         uncertainFlags.push(isDouble);
       }
-    }
     }
 
   } catch(e) {
